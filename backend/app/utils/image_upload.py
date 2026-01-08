@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 from PIL import Image
 from fastapi import UploadFile, HTTPException, status
-from typing import Tuple
+from typing import Tuple, Optional
 
 UPLOAD_DIR = Path("uploads/products")
 THUMBNAIL_DIR = Path("uploads/products/thumbnails")

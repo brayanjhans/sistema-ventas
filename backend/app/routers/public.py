@@ -31,7 +31,7 @@ async def list_public_products(
     category_id: Optional[int] = Query(None),
     min_price: Optional[float] = Query(None, ge=0),
     max_price: Optional[float] = Query(None, ge=0),
-    sort_by: str = Query("newest", regex="^(newest|price_asc|price_desc|name)$"),
+    sort_by: str = Query("newest", pattern="^(newest|price_asc|price_desc|name)$"),
     db: AsyncSession = Depends(get_db)
 ):
     """
