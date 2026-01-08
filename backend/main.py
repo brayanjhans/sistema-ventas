@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, admin_categories
+from fastapi.staticfiles import StaticFiles
+from app.routers import auth, admin_categories, admin_products
 import uvicorn
 
 app = FastAPI(
@@ -18,9 +19,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve uploaded files
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin_categories.router, prefix="/api/v1")
+app.include_router(admin_products.router, prefix="/api/v1")
 
 @app.get("/")
 def root():
