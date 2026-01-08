@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.routers import auth
 import uvicorn
 
 app = FastAPI(
@@ -17,6 +18,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
+app.include_router(auth.router, prefix="/api/v1")
+
 @app.get("/")
 def root():
     return {"message": "Sistema de Ventas API v1.0"}
@@ -24,6 +28,9 @@ def root():
 @app.get("/api/v1/health")
 def health_check():
     return {"status": "healthy"}
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
