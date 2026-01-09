@@ -1,117 +1,116 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, desc, func
 from sqlalchemy.orm import selectinload
-from database import get_db
-from app.models.product import Product, ProductImage
-from app.models.category import Category
-from app.schemas.product import ProductResponse, ProductListResponse, ProductListItem
-from app.schemas.category import CategoryResponse
-from typing import Optional
+from typing import Optional, List
 import math
+
+from app.database import get_db
+from app.models.order import Order
+from app.models.product import Product
+from app.models.category import Category
+from app.schemas.order_schemas import OrderResponse
+from app.schemas.product import ProductResponse, ProductListItem, ProductListResponse
+from app.schemas.category import CategoryResponse
 
 router = APIRouter(prefix="/public", tags=["Public"])
 
-@router.get("/categories", response_model=list[CategoryResponse])
-async def list_public_categories(
-    db: AsyncSession = Depends(get_db)
-):
-    """Get all active categories for public access"""
-    stmt = select(Category).where(Category.is_active == True).order_by(Category.name)
-    result = await db.execute(stmt)
+
+@router.get("/categories", response_model=List[CategoryResponse])
+async def get_active_categories(db: AsyncSession = Depends(get_db)):
+    """
+    Obtener todas las categorías activas (público).
+    """
+    result = await db.execute(
+        select(Category)
+        .where(Category.is_active == True)
+        .order_by(Category.name)
+    )
     categories = result.scalars().all()
-    
-    return [CategoryResponse.model_validate(cat) for cat in categories]
+    return categories
+
 
 @router.get("/products", response_model=ProductListResponse)
-async def list_public_products(
-    page: int = Query(1, ge=1),
-    limit: int = Query(12, ge=1, le=50),
-    search: Optional[str] = Query(None),
-    category_id: Optional[int] = Query(None),
-    min_price: Optional[float] = Query(None, ge=0),
-    max_price: Optional[float] = Query(None, ge=0),
-    sort_by: str = Query("newest", pattern="^(newest|price_asc|price_desc|name)$"),
+async def get_public_products(
+    limit: int = Query(default=8, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+    category_id: Optional[int] = None,
+    search: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    sort_by: str = Query(default="newest", pattern="^(newest|price_asc|price_desc|name)$"),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get all active products for public access with filters.
-    
-    Sort options:
-    - newest: Most recent first
-    - price_asc: Price low to high
-    - price_desc: Price high to low
-    - name: Alphabetical
+    Obtener productos públicos con filtros y paginación.
+    Solo muestra productos activos y con stock disponible.
     """
-    
-    # Base query - only active products
-    query = select(Product).options(selectinload(Product.images)).where(
+    # 1. Base query for active products with stock
+    base_query = select(Product).where(
         Product.is_active == True,
-        Product.stock > 0  # Only show products in stock
+        Product.stock > 0
     )
     
-    # Apply filters
-    if search:
-        query = query.where(
-            or_(
-                Product.name.ilike(f"%{search}%"),
-                Product.description.ilike(f"%{search}%")
-            )
-        )
-    
+    # 2. Apply filters
     if category_id:
-        query = query.where(Product.category_id == category_id)
+        base_query = base_query.where(Product.category_id == category_id)
     
     if min_price is not None:
-        query = query.where(Product.price >= min_price)
-    
+        base_query = base_query.where(Product.price >= min_price)
+        
     if max_price is not None:
-        query = query.where(Product.price <= max_price)
+        base_query = base_query.where(Product.price <= max_price)
     
-    # Apply sorting
+    if search:
+        search_filter = (
+            Product.name.ilike(f"%{search}%") | 
+            Product.description.ilike(f"%{search}%")
+        )
+        base_query = base_query.where(search_filter)
+
+    # 3. Calculate total count (before pagination)
+    count_query = select(func.count()).select_from(base_query.subquery())
+    result_count = await db.execute(count_query)
+    total = result_count.scalar() or 0
+
+    # 4. Apply sorting
     if sort_by == "newest":
-        query = query.order_by(Product.created_at.desc())
+        base_query = base_query.order_by(desc(Product.created_at))
     elif sort_by == "price_asc":
-        query = query.order_by(Product.price.asc())
+        base_query = base_query.order_by(Product.price.asc())
     elif sort_by == "price_desc":
-        query = query.order_by(Product.price.desc())
+        base_query = base_query.order_by(Product.price.desc())
     elif sort_by == "name":
-        query = query.order_by(Product.name.asc())
+        base_query = base_query.order_by(Product.name.asc())
     
-    # Get total count
-    count_query = select(func.count()).select_from(query.subquery())
-    result = await db.execute(count_query)
-    total = result.scalar()
-    
-    # Apply pagination
+    # 5. Apply pagination
     offset = (page - 1) * limit
-    query = query.offset(offset).limit(limit)
+    final_query = base_query.limit(limit).offset(offset).options(selectinload(Product.images))
     
-    # Execute query
-    result = await db.execute(query)
+    result = await db.execute(final_query)
     products = result.scalars().all()
     
-    # Build response items
+    # 6. Transform to ProductListItem (for response)
+    # Note: ProductListItem expects 'image_url' which is the thumbnail of the primary image
     items = []
-    for product in products:
-        # Get primary image
-        primary_image = next((img for img in product.images if img.is_primary), None)
-        if not primary_image and product.images:
-            primary_image = product.images[0]
-        
+    for p in products:
+        primary_image = next((img for img in p.images if img.is_primary), None)
+        if not primary_image and p.images:
+            primary_image = p.images[0]
+            
         items.append(ProductListItem(
-            id=product.id,
-            name=product.name,
-            slug=product.slug,
-            category_id=product.category_id,
-            price=product.price,
-            stock=product.stock,
-            is_active=product.is_active,
+            id=p.id,
+            name=p.name,
+            slug=p.slug,
+            category_id=p.category_id,
+            price=p.price,
+            stock=p.stock,
+            is_active=p.is_active,
             image_url=primary_image.thumbnail_url if primary_image else None
         ))
-    
+
     pages = math.ceil(total / limit) if total > 0 else 0
-    
+
     return ProductListResponse(
         items=items,
         total=total,
@@ -120,25 +119,55 @@ async def list_public_products(
         limit=limit
     )
 
+
 @router.get("/products/{slug}", response_model=ProductResponse)
-async def get_public_product(
+async def get_product_by_slug(
     slug: str,
     db: AsyncSession = Depends(get_db)
 ):
-    """Get product detail by slug for public access"""
-    
-    stmt = select(Product).options(selectinload(Product.images)).where(
-        Product.slug == slug,
-        Product.is_active == True
+    """
+    Obtener un producto por su slug (público).
+    """
+    result = await db.execute(
+        select(Product)
+        .options(selectinload(Product.images))
+        .where(Product.slug == slug, Product.is_active == True)
     )
-    result = await db.execute(stmt)
     product = result.scalar_one_or_none()
     
     if not product:
-        from fastapi import HTTPException, status
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
+            detail="Producto no encontrado"
         )
     
-    return ProductResponse.model_validate(product)
+    return product
+
+
+@router.get("/orders/{order_number}", response_model=OrderResponse)
+async def get_order_by_number(
+    order_number: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obtener detalles de un pedido por su número de orden (público).
+    
+    - No requiere autenticación
+    - Retorna información completa del pedido
+    - Incluye lista de items/productos
+    """
+    
+    result = await db.execute(
+        select(Order)
+        .options(selectinload(Order.items))
+        .where(Order.order_number == order_number)
+    )
+    order = result.scalar_one_or_none()
+    
+    if not order:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Pedido no encontrado"
+        )
+    
+    return order

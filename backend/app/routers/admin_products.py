@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.orm import selectinload
-from database import get_db
+from app.database import get_db
 from app.models.product import Product, ProductImage
 from app.models.category import Category
 from app.schemas.product import (
     ProductCreate, ProductUpdate, ProductResponse, 
     ProductListResponse, ProductListItem, ProductImageResponse
 )
-from app.utils.dependencies import require_admin
+from app.utils.dependencies import get_current_admin_user
 from app.utils.helpers import slugify
 from app.utils.image_upload import save_upload_file, delete_image_files
 from typing import Optional
@@ -25,12 +25,15 @@ async def list_products(
     category_id: Optional[int] = Query(None),
     is_active: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """List all products with pagination and filters. Admin only."""
     
-    # Base query with eager loading of images
-    query = select(Product).options(selectinload(Product.images))
+    # Base query with eager loading of images and category
+    query = select(Product).options(
+        selectinload(Product.images),
+        selectinload(Product.category)
+    )
     
     # Apply filters
     if search:
@@ -76,7 +79,8 @@ async def list_products(
             price=product.price,
             stock=product.stock,
             is_active=product.is_active,
-            image_url=primary_image.thumbnail_url if primary_image else None
+            image_url=primary_image.thumbnail_url if primary_image else None,
+            category=product.category
         ))
     
     pages = math.ceil(total / limit) if total > 0 else 0
@@ -93,7 +97,7 @@ async def list_products(
 async def create_product(
     product_data: ProductCreate,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """Create new product. Admin only."""
     
@@ -141,7 +145,7 @@ async def create_product(
 async def get_product(
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """Get product by ID with images. Admin only."""
     
@@ -162,7 +166,7 @@ async def update_product(
     product_id: int,
     product_data: ProductUpdate,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """Update product. Admin only."""
     
@@ -220,7 +224,7 @@ async def update_product(
 async def delete_product(
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """Soft delete product. Admin only."""
     
@@ -245,7 +249,7 @@ async def upload_product_image(
     file: UploadFile = File(...),
     is_primary: bool = Query(False),
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """Upload image for product. Admin only."""
     
@@ -289,7 +293,7 @@ async def delete_product_image(
     product_id: int,
     image_id: int,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """Delete product image. Admin only."""
     
@@ -314,3 +318,81 @@ async def delete_product_image(
     await db.commit()
     
     return None
+
+
+@router.delete("/delete/{product_id}", status_code=status.HTTP_200_OK)
+async def delete_product(
+    product_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(get_current_admin_user)
+):
+    """
+    Eliminar o desactivar un producto (solo admin).
+    - Si el producto tiene pedidos asociados: SOFT DELETE (marca como inactivo)
+    - Si no tiene pedidos: ELIMINA permanentemente el producto y sus imágenes
+    """
+    print(f"🗑️ DELETE REQUEST - Product ID: {product_id}")
+    
+    # Buscar el producto con sus imágenes
+    result = await db.execute(
+        select(Product)
+        .options(selectinload(Product.images))
+        .where(Product.id == product_id)
+    )
+    product = result.scalar_one_or_none()
+    
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Producto no encontrado"
+        )
+    
+    product_name = product.name
+    print(f"✅ Producto encontrado: {product_name}")
+    
+    # Verificar si tiene pedidos asociados
+    from app.models.order import OrderItem
+    result_orders = await db.execute(
+        select(OrderItem).where(OrderItem.product_id == product_id)
+    )
+    has_orders = result_orders.scalar_one_or_none() is not None
+    
+    if has_orders:
+        # SOFT DELETE: Solo marcar como inactivo
+        print(f"⚠️ El producto tiene pedidos asociados. Haciendo SOFT DELETE...")
+        product.is_active = False
+        await db.commit()
+        await db.refresh(product)
+        
+        print(f"✅ Producto '{product_name}' marcado como INACTIVO (soft delete)")
+        return {
+            "message": f"Producto '{product_name}' desactivado correctamente",
+            "deleted": False,
+            "soft_delete": True,
+            "reason": "El producto tiene pedidos asociados"
+        }
+    
+    # HARD DELETE: Eliminar permanentemente
+    print(f"🔥 El producto NO tiene pedidos. Eliminando PERMANENTEMENTE...")
+    
+    # Eliminar imágenes físicas del servidor
+    image_urls = [img.image_url for img in product.images]
+    if image_urls:
+        print(f"📁 Eliminando {len(image_urls)} imágenes...")
+        for url in image_urls:
+            try:
+                delete_image_files(url)
+            except Exception as e:
+                print(f"⚠️ Error al eliminar imagen {url}: {e}")
+    
+    # Eliminar producto PERMANENTEMENTE de la base de datos
+    await db.delete(product)
+    await db.commit()
+    
+    print(f"✅ Producto '{product_name}' eliminado PERMANENTEMENTE")
+    
+    return {
+        "message": f"Producto '{product_name}' eliminado permanentemente",
+        "deleted": True,
+        "soft_delete": False
+    }

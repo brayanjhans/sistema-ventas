@@ -3,6 +3,13 @@ from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 
+class CategoryBase(BaseModel):
+    name: str
+    slug: str
+
+    class Config:
+        from_attributes = True
+
 class ProductImageResponse(BaseModel):
     id: int
     image_url: str
@@ -29,11 +36,9 @@ class ProductBase(BaseModel):
         return v
 
 class ProductCreate(ProductBase):
-    """Schema para crear producto. El slug se genera automáticamente."""
     pass
 
 class ProductUpdate(BaseModel):
-    """Schema para actualizar producto. Todos los campos son opcionales."""
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
     category_id: Optional[int] = Field(None, gt=0)
@@ -47,6 +52,7 @@ class ProductResponse(BaseModel):
     slug: str
     description: Optional[str]
     category_id: int
+    category: Optional[CategoryBase] = None # Added field
     price: Decimal
     stock: int
     is_active: bool
@@ -58,15 +64,15 @@ class ProductResponse(BaseModel):
         from_attributes = True
 
 class ProductListItem(BaseModel):
-    """Schema simplificado para listados (sin imágenes para eficiencia)"""
     id: int
     name: str
     slug: str
     category_id: int
+    category: Optional[CategoryBase] = None # Added field
     price: Decimal
     stock: int
     is_active: bool
-    image_url: Optional[str] = None  # Solo imagen principal
+    image_url: Optional[str] = None
     
     class Config:
         from_attributes = True

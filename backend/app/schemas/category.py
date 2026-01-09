@@ -6,6 +6,7 @@ import re
 class CategoryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=500)
+    image_url: Optional[str] = Field(None, max_length=500)
     is_active: bool = True
 
 class CategoryCreate(CategoryBase):
@@ -17,6 +18,7 @@ class CategoryUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     slug: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-z0-9-]+$')
     description: Optional[str] = Field(None, max_length=500)
+    image_url: Optional[str] = Field(None, max_length=500)
     is_active: Optional[bool] = None
 
 class CategoryResponse(BaseModel):
@@ -24,6 +26,7 @@ class CategoryResponse(BaseModel):
     name: str
     slug: str
     description: Optional[str]
+    image_url: Optional[str]
     is_active: bool
     created_at: datetime
     updated_at: datetime

@@ -1,6 +1,6 @@
 from sqlalchemy import Column, BigInteger, String, DECIMAL, Integer, Boolean, TIMESTAMP, ForeignKey, text
 from sqlalchemy.orm import relationship
-from database import Base
+from app.database import Base
 
 class Product(Base):
     __tablename__ = "products"

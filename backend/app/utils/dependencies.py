@@ -1,7 +1,7 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from database import get_db
+from app.database import get_db
 from app.utils.auth import decode_token
 from app.services.auth_service import AuthService
 from typing import Optional
@@ -51,7 +51,38 @@ async def get_current_user(
     
     return user
 
-async def require_admin(
+async def get_optional_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+    db: AsyncSession = Depends(get_db)
+) -> Optional:
+    """
+    Dependency para obtener usuario actual desde JWT, pero permitiendo null.
+    Si no hay token, retorna None.
+    """
+    if not credentials:
+        return None
+    
+    token = credentials.credentials
+    payload = decode_token(token)
+    
+    if not payload:
+        return None
+    
+    email = payload.get("sub")
+    if email is None:
+        return None
+    
+    user = await AuthService.get_user_by_email(db, email)
+    
+    if user is None:
+        return None
+    
+    if not user.is_active:
+        return None
+    
+    return user
+
+async def get_current_admin_user(
     current_user = Depends(get_current_user)
 ):
     """

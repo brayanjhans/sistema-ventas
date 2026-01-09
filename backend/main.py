@@ -1,32 +1,43 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, admin_categories, admin_products, public
+from app.routers import auth, public, admin_categories, admin_products, public_orders, admin_orders, admin_analytics, admin_settings, admin_stock
 import uvicorn
+import os
 
 app = FastAPI(
     title="Sistema de Ventas API",
-    description="API REST para sistema de e-commerce",
-    version="1.0.0"
+    description="API para sistema de ventas con autenticación y gestión de productos",
+    version="1.0.0",
 )
 
-# CORS configuration
+# Configuración de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Frontend Next.js
+    allow_origins=["http://localhost:3000"],  # Frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Serve uploaded files
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Ensure uploads directory exists
+if not os.path.exists(os.path.join(BASE_DIR, "uploads")):
+    os.makedirs(os.path.join(BASE_DIR, "uploads"))
+
+app.mount("/uploads", StaticFiles(directory=os.path.join(BASE_DIR, "uploads")), name="uploads")
 
 # Include routers
 app.include_router(public.router, prefix="/api/v1")  # Public first (no auth)
+app.include_router(public_orders.router, prefix="/api/v1")  # Public orders
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin_categories.router, prefix="/api/v1")
 app.include_router(admin_products.router, prefix="/api/v1")
+app.include_router(admin_orders.router, prefix="/api/v1")  # Admin orders
+app.include_router(admin_analytics.router, prefix="/api/v1")  # Admin analytics
+app.include_router(admin_settings.router, prefix="/api/v1")  # Admin settings
+app.include_router(admin_stock.router, prefix="/api/v1")     # Admin stock
 
 @app.get("/")
 def root():

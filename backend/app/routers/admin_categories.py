@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from database import get_db
+from app.database import get_db
 from app.models.category import Category
 from app.schemas.category import (
     CategoryCreate, CategoryUpdate, CategoryResponse, CategoryListResponse
 )
-from app.utils.dependencies import require_admin
+from app.utils.dependencies import get_current_admin_user
 from app.utils.helpers import slugify
+from app.utils.image_upload import save_upload_file, delete_image_files
 from typing import Optional
 import math
 
@@ -20,7 +21,7 @@ async def list_categories(
     search: Optional[str] = Query(None, description="Search by name"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """
     List all categories with pagination and filters.
@@ -64,7 +65,7 @@ async def list_categories(
 async def create_category(
     category_data: CategoryCreate,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """
     Create new category.
@@ -103,7 +104,7 @@ async def create_category(
 async def get_category(
     category_id: int,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """
     Get category by ID.
@@ -126,7 +127,7 @@ async def update_category(
     category_id: int,
     category_data: CategoryUpdate,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """
     Update category.
@@ -179,7 +180,7 @@ async def update_category(
 async def delete_category(
     category_id: int,
     db: AsyncSession = Depends(get_db),
-    current_admin = Depends(require_admin)
+    current_admin = Depends(get_current_admin_user)
 ):
     """
     Soft delete category (marks as inactive).
@@ -201,3 +202,42 @@ async def delete_category(
     await db.commit()
     
     return None
+
+@router.post("/{category_id}/image", response_model=CategoryResponse)
+async def upload_category_image(
+    category_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_admin = Depends(get_current_admin_user)
+):
+    """
+    Upload image for category.
+    Only accessible by ADMIN.
+    """
+    stmt = select(Category).where(Category.id == category_id)
+    result = await db.execute(stmt)
+    category = result.scalar_one_or_none()
+    
+    if not category:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Category not found"
+        )
+    
+    # Delete old image if exists
+    if category.image_url:
+        try:
+            delete_image_files(category.image_url)
+        except Exception as e:
+            print(f"Error deleting old image: {e}")
+            
+    # Save new image
+    image_url, _ = await save_upload_file(file)
+    
+    # Update category
+    category.image_url = image_url
+    
+    await db.commit()
+    await db.refresh(category)
+    
+    return CategoryResponse.model_validate(category)

@@ -1,5 +1,6 @@
 from sqlalchemy import Column, BigInteger, String, Enum, Boolean, TIMESTAMP, text
-from database import Base
+from sqlalchemy.orm import relationship
+from app.database import Base
 import enum
 
 class UserRole(str, enum.Enum):
@@ -24,3 +25,6 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP'))
     updated_at = Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
+    
+    # Relationships
+    orders = relationship("Order", back_populates="user")
