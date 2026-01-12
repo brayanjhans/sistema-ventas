@@ -39,6 +39,9 @@ class OrderCreate(BaseModel):
     # Notas adicionales
     notes: Optional[str] = None
     
+    # Método de pago
+    payment_method: Optional[str] = Field(None, max_length=20)
+    
     # Items del pedido
     items: List[OrderItemCreate] = Field(min_length=1)
     

@@ -7,8 +7,8 @@ from typing import Tuple, Optional
 
 UPLOAD_DIR = Path("uploads/products")
 THUMBNAIL_DIR = Path("uploads/products/thumbnails")
-ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
-MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
+ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.tif', '.jfif', '.avif', '.heic', '.heif'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 
 # Create directories if they don't exist
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -19,6 +19,7 @@ def validate_image(file: UploadFile) -> None:
     # Check extension
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
+        print(f"❌ Rejected file: {file.filename} (Extension: {ext})")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"

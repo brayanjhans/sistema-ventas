@@ -31,6 +31,7 @@ class UserResponse(BaseModel):
     full_name: str
     role: str
     phone: Optional[str] = None
+    avatar_url: Optional[str] = None
     created_at: datetime
     
     class Config:

@@ -12,4 +12,5 @@ Pillow==10.2.0
 python-dotenv==1.0.0
 argon2-cffi
 aiofiles==23.2.1
+google-auth==2.27.0
 

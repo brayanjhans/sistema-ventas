@@ -110,6 +110,7 @@ async def create_order(
         shipping_cost=shipping_cost,
         total=total,
         status="PENDING_PAYMENT",
+        payment_method=order_data.payment_method if hasattr(order_data, 'payment_method') else None,
         notes=order_data.notes
     )
     

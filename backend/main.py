@@ -1,9 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from app.routers import auth, public, admin_categories, admin_products, public_orders, admin_orders, admin_analytics, admin_settings, admin_stock
+from app.routers import auth, public, admin_categories, admin_products, public_orders, admin_orders, admin_analytics, admin_settings, admin_stock, users, public_receipt
 import uvicorn
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(
     title="Sistema de Ventas API",
@@ -31,7 +34,9 @@ app.mount("/uploads", StaticFiles(directory=os.path.join(BASE_DIR, "uploads")), 
 # Include routers
 app.include_router(public.router, prefix="/api/v1")  # Public first (no auth)
 app.include_router(public_orders.router, prefix="/api/v1")  # Public orders
+app.include_router(public_receipt.router, prefix="/api/v1")  # Receipt uploads
 app.include_router(auth.router, prefix="/api/v1")
+app.include_router(users.router, prefix="/api/v1")
 app.include_router(admin_categories.router, prefix="/api/v1")
 app.include_router(admin_products.router, prefix="/api/v1")
 app.include_router(admin_orders.router, prefix="/api/v1")  # Admin orders

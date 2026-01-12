@@ -137,9 +137,74 @@ async def google_auth(
     Login or register with Google OAuth.
     Requires Google JWT credential.
     """
-    # TODO: Implement Google OAuth verification
-    # Need GOOGLE_CLIENT_ID environment variable
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Google OAuth not yet configured. Set GOOGLE_CLIENT_ID first."
-    )
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests
+        import os
+        
+        # Verify Google Token
+        # Note: In production you should verify the AUDIENCE matches your Client ID
+        # client_id = os.getenv('GOOGLE_CLIENT_ID')
+        # idinfo = id_token.verify_oauth2_token(request.credential, requests.Request(), client_id)
+        
+        # For development/MVP we accept the token validated by Google's library
+        # (Assuming the client is trustworthy or we verify audience if env var is set)
+        
+        client_id = os.getenv('GOOGLE_CLIENT_ID')
+        idinfo = id_token.verify_oauth2_token(request.credential, requests.Request(), client_id)
+
+        email = idinfo.get('email')
+        google_id = idinfo.get('sub')
+        name = idinfo.get('name')
+        
+        if not email:
+            raise HTTPException(400, "Invalid Google Token: No email found")
+
+        # Check if user exists
+        user = await AuthService.get_user_by_email(db, email)
+        
+        if user:
+            # Update user if not linked yet
+            if not user.google_id:
+                user.google_id = google_id
+                # user.auth_provider = 'GOOGLE' # Optional: Keep original or switch? Let's just link.
+                await db.commit()
+                await db.refresh(user)
+        else:
+            # Register new user
+            from app.models.user import User, UserRole, AuthProvider
+            new_user = User(
+                email=email,
+                full_name=name,
+                role=UserRole.USER,
+                auth_provider=AuthProvider.GOOGLE,
+                google_id=google_id,
+                is_active=True
+            )
+            db.add(new_user)
+            await db.commit()
+            await db.refresh(new_user)
+            user = new_user
+
+        # Generate tokens
+        tokens = AuthService.create_tokens(user)
+        
+        return {
+            "access_token": tokens.access_token,
+            "refresh_token": tokens.refresh_token,
+            "token_type": tokens.token_type,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.full_name,
+                "role": user.role.value,
+                "avatar_url": user.avatar_url,
+                "auth_provider": user.auth_provider.value
+            }
+        }
+        
+    except ValueError as e:
+        # Invalid token
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Invalid Google Token: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Google Auth Error: {str(e)}")

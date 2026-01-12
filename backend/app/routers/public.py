@@ -85,7 +85,10 @@ async def get_public_products(
     
     # 5. Apply pagination
     offset = (page - 1) * limit
-    final_query = base_query.limit(limit).offset(offset).options(selectinload(Product.images))
+    final_query = base_query.limit(limit).offset(offset).options(
+        selectinload(Product.images),
+        selectinload(Product.category)
+    )
     
     result = await db.execute(final_query)
     products = result.scalars().all()
@@ -103,6 +106,7 @@ async def get_public_products(
             name=p.name,
             slug=p.slug,
             category_id=p.category_id,
+            category=p.category, # Include category object
             price=p.price,
             stock=p.stock,
             is_active=p.is_active,
@@ -130,7 +134,10 @@ async def get_product_by_slug(
     """
     result = await db.execute(
         select(Product)
-        .options(selectinload(Product.images))
+        .options(
+            selectinload(Product.images),
+            selectinload(Product.category)
+        )
         .where(Product.slug == slug, Product.is_active == True)
     )
     product = result.scalar_one_or_none()
@@ -142,6 +149,68 @@ async def get_product_by_slug(
         )
     
     return product
+
+
+@router.get("/products/{product_id}/addons", response_model=List[ProductListItem])
+async def get_product_addons(
+    product_id: int,
+    limit: int = Query(default=3, ge=1, le=10),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Obtener productos complementarios (add-ons) para un producto.
+    
+    Lógica:
+    1. Productos de precio menor o similar (complementos)
+    2. Categorías complementarias predefinidas (chocolates, vinos, tarjetas)
+    3. Excluye el producto actual
+    """
+    # Obtener producto actual
+    result = await db.execute(
+        select(Product).where(Product.id == product_id)
+    )
+    current_product = result.scalar_one_or_none()
+    
+    if not current_product:
+        return []
+    
+    # Definir categorías complementarias típicas (puedes ajustar según tu BD)
+    # Chocolates, Vinos, Tarjetas, Peluches pequeños, etc.
+    complementary_categories = ["Chocolates", "Vinos", "Tarjetas", "Dulces"]
+    
+    # Query para productos complementarios
+    query = (
+        select(Product)
+        .options(selectinload(Product.images), selectinload(Product.category))
+        .where(
+            Product.is_active == True,
+            Product.stock > 0,
+            Product.id != product_id,
+            # Precio menor o similar (hasta 50% del precio del producto principal)
+            Product.price <= (current_product.price * 0.5)
+        )
+        .order_by(func.random())  # Aleatorio para variedad
+        .limit(limit)
+    )
+    
+    result = await db.execute(query)
+    addons = result.scalars().all()
+    
+    # Mapear a ProductListItem
+    return [
+        ProductListItem(
+            id=p.id,
+            name=p.name,
+            slug=p.slug,
+            category_id=p.category_id,
+            category=p.category,
+            price=p.price,
+            stock=p.stock,
+            is_active=p.is_active,
+            image_url=p.images[0].image_url if p.images else None
+        )
+        for p in addons
+    ]
 
 
 @router.get("/orders/{order_number}", response_model=OrderResponse)

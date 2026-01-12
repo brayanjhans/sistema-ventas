@@ -43,6 +43,8 @@ class Order(Base):
         default=OrderStatus.PENDING_PAYMENT,
         index=True
     )
+    payment_method = Column(String(20), nullable=True)  # 'yape', 'card', etc.
+    receipt_url = Column(String(500), nullable=True)  # URL del comprobante de pago
     notes = Column(Text, nullable=True)
     
     # Fechas

@@ -112,17 +112,19 @@ async def create_product(
             detail="Category not found"
         )
     
-    # Generate slug
-    slug = slugify(product_data.name)
+    # Generate initial slug
+    base_slug = slugify(product_data.name)
+    slug = base_slug
+    counter = 1
     
-    # Check slug uniqueness
-    stmt = select(Product).where(Product.slug == slug)
-    result = await db.execute(stmt)
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Product with slug '{slug}' already exists"
-        )
+    # Check slug uniqueness and increment if necessary
+    while True:
+        stmt = select(Product).where(Product.slug == slug)
+        result = await db.execute(stmt)
+        if not result.scalar_one_or_none():
+            break
+        counter += 1
+        slug = f"{base_slug}-{counter}"
     
     # Create product
     new_product = Product(
@@ -137,7 +139,11 @@ async def create_product(
     
     db.add(new_product)
     await db.commit()
-    await db.refresh(new_product, ['images'])
+    
+    # Reload product with images eagerly loaded
+    stmt = select(Product).options(selectinload(Product.images)).where(Product.id == new_product.id)
+    result = await db.execute(stmt)
+    new_product = result.scalar_one()
     
     return ProductResponse.model_validate(new_product)
 
@@ -170,55 +176,77 @@ async def update_product(
 ):
     """Update product. Admin only."""
     
-    # Get product
-    stmt = select(Product).options(selectinload(Product.images)).where(Product.id == product_id)
-    result = await db.execute(stmt)
-    product = result.scalar_one_or_none()
-    
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
-        )
-    
-    update_data = product_data.model_dump(exclude_unset=True)
-    
-    # If category changed, verify it exists
-    if 'category_id' in update_data:
-        stmt = select(Category).where(Category.id == update_data['category_id'])
+    try:
+        # Get product - IMPORTANTE: cargar category con selectinload
+        stmt = select(Product).options(
+            selectinload(Product.images),
+            selectinload(Product.category)
+        ).where(Product.id == product_id)
         result = await db.execute(stmt)
-        if not result.scalar_one_or_none():
+        product = result.scalar_one_or_none()
+        
+        if not product:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Category not found"
+                detail="Product not found"
             )
-    
-    # If name changed, regenerate slug
-    if 'name' in update_data:
-        new_slug = slugify(update_data['name'])
         
-        # Check uniqueness
-        stmt = select(Product).where(
-            Product.slug == new_slug,
-            Product.id != product_id
+        update_data = product_data.model_dump(exclude_unset=True)
+        
+        # If category changed, verify it exists
+        if 'category_id' in update_data:
+            stmt = select(Category).where(Category.id == update_data['category_id'])
+            result = await db.execute(stmt)
+            if not result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Category not found"
+                )
+        
+        # If name changed, regenerate slug
+        if 'name' in update_data:
+            base_slug = slugify(update_data['name'])
+            new_slug = base_slug
+            counter = 1
+            
+            # Check uniqueness loop
+            while True:
+                stmt = select(Product).where(
+                    Product.slug == new_slug,
+                    Product.id != product_id
+                )
+                result = await db.execute(stmt)
+                if not result.scalar_one_or_none():
+                    break
+                counter += 1
+                new_slug = f"{base_slug}-{counter}"
+            
+            update_data['slug'] = new_slug
+        
+        # Apply updates
+        for field, value in update_data.items():
+            setattr(product, field, value)
+        
+        await db.commit()
+        await db.refresh(product)
+        
+        return ProductResponse.model_validate(product)
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        print(f"❌ Error updating product {product_id}:")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Error message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}"
         )
-        result = await db.execute(stmt)
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Product with slug '{new_slug}' already exists"
-            )
-        
-        update_data['slug'] = new_slug
-    
-    # Apply updates
-    for field, value in update_data.items():
-        setattr(product, field, value)
-    
-    await db.commit()
-    await db.refresh(product)
-    
-    return ProductResponse.model_validate(product)
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_product(
@@ -253,40 +281,65 @@ async def upload_product_image(
 ):
     """Upload image for product. Admin only."""
     
-    # Verify product exists
-    stmt = select(Product).options(selectinload(Product.images)).where(Product.id == product_id)
-    result = await db.execute(stmt)
-    product = result.scalar_one_or_none()
-    
-    if not product:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Product not found"
+    try:
+        print(f"📸 Uploading image for product {product_id}")
+        print(f"   File: {file.filename}")
+        print(f"   Content-Type: {file.content_type}")
+        print(f"   is_primary: {is_primary}")
+        
+        # Verify product exists
+        stmt = select(Product).options(selectinload(Product.images)).where(Product.id == product_id)
+        result = await db.execute(stmt)
+        product = result.scalar_one_or_none()
+        
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Product not found"
+            )
+        
+        print(f"✓ Product found: {product.name}")
+        
+        # Save image
+        image_url, thumbnail_url = await save_upload_file(file)
+        print(f"✓ Image saved: {image_url}")
+        
+        # If is_primary, unmark other images
+        if is_primary:
+            for img in product.images:
+                img.is_primary = False
+        
+        # Create image record
+        display_order = len(product.images)
+        new_image = ProductImage(
+            product_id=product_id,
+            image_url=image_url,
+            thumbnail_url=thumbnail_url,
+            is_primary=is_primary,
+            display_order=display_order
         )
-    
-    # Save image
-    image_url, thumbnail_url = await save_upload_file(file)
-    
-    # If is_primary, unmark other images
-    if is_primary:
-        for img in product.images:
-            img.is_primary = False
-    
-    # Create image record
-    display_order = len(product.images)
-    new_image = ProductImage(
-        product_id=product_id,
-        image_url=image_url,
-        thumbnail_url=thumbnail_url,
-        is_primary=is_primary,
-        display_order=display_order
-    )
-    
-    db.add(new_image)
-    await db.commit()
-    await db.refresh(new_image)
-    
-    return ProductImageResponse.model_validate(new_image)
+        
+        db.add(new_image)
+        await db.commit()
+        await db.refresh(new_image)
+        
+        print(f"✅ Image uploaded successfully: ID {new_image.id}")
+        return ProductImageResponse.model_validate(new_image)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error uploading image:")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Error message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading image: {str(e)}"
+        )
 
 @router.delete("/{product_id}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_product_image(

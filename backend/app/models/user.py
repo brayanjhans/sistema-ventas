@@ -22,6 +22,7 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False, default=UserRole.USER)
     auth_provider = Column(Enum(AuthProvider), nullable=False, default=AuthProvider.EMAIL)
     google_id = Column(String(255), unique=True, nullable=True)
+    avatar_url = Column(String(500), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP'))
     updated_at = Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP'))
